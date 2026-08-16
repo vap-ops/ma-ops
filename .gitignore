@@ -1,0 +1,22 @@
+# deps / build
+node_modules/
+.next/
+out/
+dist/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# claude code — per-machine only, shared config IS committed
+.claude/settings.local.json
+CLAUDE.local.md
+
+# supabase local
+supabase/.temp/
+supabase/.branches/
+
+# misc
+*.log
+.DS_Store
