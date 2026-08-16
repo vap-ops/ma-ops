@@ -14,5 +14,6 @@ Then: domain-model brainstorm (contracts/jobs/assets/visits) → feature specs �
 
 Rules for JIT plan authors:
 - Read ADR 0001 first; it is the SSOT. A plan that contradicts it needs an ADR first.
+- Check [../PORT-MANIFEST.md](../PORT-MANIFEST.md) — it names the prc-ops artifacts your plan ports and how to adapt them. Port at plan time, never bulk-copy ahead.
 - Probe live facts (versions, plan quotas, beta status) before pinning them in steps — the ADR's §verified-facts carry Aug-2026 dates and expire.
 - Every plan follows superpowers:writing-plans format: exact paths, complete code in steps, TDD, frequent commits.
