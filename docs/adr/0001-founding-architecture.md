@@ -1,6 +1,6 @@
 # ADR 0001 — Founding architecture: repo, database, CI/CD, and multi-developer Claude Code setup
 
-- **Status:** Proposed (operator review pending)
+- **Status:** Accepted (operator, 2026-08-16)
 - **Date:** 2026-08-16
 - **Deciders:** Operator + Claude Code (adversarial research workflow: 3 stack advocates → weighted judge → 2 skeptic verification agents; 10 agents, web-verified against primary sources)
 
@@ -25,7 +25,7 @@ Every design decision below either serves this invariant or inherits a proven pr
 | Area | Decision | Rejected |
 |---|---|---|
 | Stack | Next.js App Router + Supabase + Vercel + pnpm + vitest + pgTAP ("same stack, refined") | Neon+Drizzle+tRPC (7.4/10), Convex (7.0/10) — see §Alternatives |
-| Repo | `vap-ops/ma-ops`, private, GitHub Team plan, flat single-level layout | New org; nested layout |
+| Repo | `vap-ops/ma-ops`, **public** (org is on the Free plan; public = full rulesets/required checks/auto-merge at $0 — same posture as prc-ops), flat single-level layout | Private + Team-plan upgrade (~$12/mo); new org; nested layout |
 | Schema channel | Numbered migrations, immutable once merged, CI-enforced | Declarative-diff as the channel (diff engine mishandles `alter policy`/grants/triggers) |
 | Test DB | Ephemeral `supabase start` on the CI runner, per PR, replay-from-zero | Shared remote dev/test DB (prc-ops's largest pain class) |
 | Prod schema | Applied only by GitHub Actions on merge, sequenced with deploy | Interactive `db:push` from sessions |
@@ -38,13 +38,13 @@ Every design decision below either serves this invariant or inherits a proven pr
 
 ## S1 — Repo + toolchain
 
-`vap-ops/ma-ops`, private. pnpm, Next.js App Router (current stable at bootstrap), TypeScript strict, Tailwind, vitest, pgTAP.
+`vap-ops/ma-ops`, public (see Decision summary — secrets never live in the repo by design, S6). pnpm, Next.js App Router (current stable at bootstrap), TypeScript strict, Tailwind, vitest, pgTAP.
 
 From commit #1 (each kills a prc-ops retrofit):
 - `.gitattributes` with `* text=auto eol=lf` — no CRLF phantom diffs.
 - Format-check as a required CI job — drift can never accumulate (prc-ops `main` carries real prettier drift today; `pnpm format` rewrites ~55 unrelated files).
 - NUL/text-integrity guard (a NUL byte once made a source file render as an empty "binary" diff).
-- Secret-shape grep in CI (GHAS push protection costs extra on private repos; the grep + the secrets architecture in S6 is proportionate).
+- Secret scanning + push protection enabled (free on public repos) **plus** a secret-shape grep in CI. The repo being public makes secret hygiene existential: the S6 architecture (dangerous secrets never on machines or in the repo) is the primary defense; scanners are the backstop.
 
 Canonical executable ops surface — scripts, not prose memory:
 - `scripts/verify` — runs the whole local gate, writes its own log, prints structured `EXITCODE=`, never piped (pipes have swallowed red suites into committed "greens").
@@ -93,7 +93,9 @@ CI-enforced migration rules (enforced, not remembered):
 - Injectable/frozen clock in DB tests.
 - `seq bigint identity` convention on append-only tables (ordering ties on `created_at` produce flaky assertions).
 
-Auth: Supabase **custom OIDC provider for LINE Login** — GA since June 2026, no beta label, `email_optional: true` supported (most Thai LINE accounts expose no email). Custom access-token hook carries the role claim. Roles (initial set, to be finalized in the domain-model spec): `super_admin`, `office`, `auditor`, `technician`, `customer` — plus a role the operator referred to as "cc", to be defined before the roles migration ships. A `dev-preview` magic-link super-admin account exists on preview builds only.
+Auth: Supabase **custom OIDC provider for LINE Login** — GA since June 2026, no beta label, `email_optional: true` supported (most Thai LINE accounts expose no email). Custom access-token hook carries the role claim. Roles (initial set, finalized in the domain-model spec): `super_admin`, `office`, `auditor`, `technician`, `customer`.
+
+**Claude Code is a first-class in-app actor.** The operator's "cc" login is Claude Code itself: MA gets a dedicated **`agent` service principal** from day 1 — its own account, least-privilege grants, every write audit-logged with the agent identity — for CC-driven flows (feedback triage, drafting replies, ops automation). This replaces prc-ops's pattern of CC acting through `service_role` RPCs ad hoc; in MA the agent's capabilities are explicit, testable in pgTAP like any role, and revocable. A `dev-preview` magic-link super-admin account exists on preview builds only.
 
 RLS + security-definer RPC conventions carry over from prc-ops verbatim (the guard library was verified stack-generic: `run-pgtap.ts`, posture-pin patterns, migration doctrine).
 
@@ -114,7 +116,7 @@ Ruleset on `main` (Rulesets, not classic branch protection):
 - **No bypass actors, admins included** — one merge path for all PRs. (prc-ops's by-design-failing "danger-path guard" check forced routine admin bypasses; twice a break landed armed and silent.)
 - Repo allows auto-merge; ship ritual = `gh pr merge --auto --squash`.
 
-**No merge queue.** Verified: GitHub merge queue requires a public org repo or GitHub Enterprise Cloud — not available on a private Team-plan repo. Even if available: at 3 committers the serialization pressure is low and prc-ops demonstrates the cost side (cross-lane ejections, lying probes, a whole operations playbook). Escape hatches if PR volume ever forces it: Mergify, or Enterprise Cloud. Do not pre-buy.
+**No merge queue.** With the repo public a queue is *available* (prc-ops runs one on the same plan) — rejected on merit: at 3 committers the serialization pressure is low and prc-ops demonstrates the cost side (cross-lane ejections, lying probes, a whole operations playbook). The require-up-to-date ruleset does the same job at this scale. Escape hatch if PR volume ever forces it: Mergify or the native queue. Do not pre-adopt.
 
 Danger path: a CI check fails on `DROP|TRUNCATE|ALTER .* DROP` patterns in migrations until a `danger-approved` label is present; only the operator applies that label. Destructive change = 🔔 to operator, in-band.
 
@@ -154,7 +156,9 @@ Per-machine quirks (paths, shell, the Windows Thai-text-via-Edit-tool rule) go i
 
 **Knowledge policy:** shared project knowledge (lessons, decisions, gotchas) lives in-repo — `docs/adr/`, `docs/automations.md`, rule files — where all three CCs load it. Personal auto-memory remains personal per seat. The operator's prc-ops-style memory system continues for the operator's own workflow, but MA project facts belong in the repo.
 
-Teammates #2/#3 run **claude.ai/code cloud sessions**: org cloud-environment config with a setup script (`pnpm install`; env = anon key + URLs only), GitHub App auth, `/teleport` to a terminal as escape hatch. Ephemeral Linux VM per session — the entire Windows quirk catalog never applies to them. Verification of user-facing work happens on per-PR Vercel preview URLs, not local dev servers.
+Claude subscriptions are individual per seat (no Claude Team plan); the CI review action authenticates with the operator's OAuth token or an API key — teammate seats never lend credentials to CI.
+
+Teammates #2/#3 run **claude.ai/code cloud sessions**: cloud-environment config with a setup script (`pnpm install`; env = anon key + URLs only), GitHub App auth, `/teleport` to a terminal as escape hatch. Ephemeral Linux VM per session — the entire Windows quirk catalog never applies to them. Verification of user-facing work happens on per-PR Vercel preview URLs, not local dev servers.
 
 `docs/ONBOARDING.md` is written to be **executed by a new teammate's CC session** ("paste this into Claude Code"), ending with `pnpm doctor` printing ✅/❌ evidence.
 
@@ -199,11 +203,12 @@ Load-bearing verified facts (skeptic pass, primary sources, Aug 2026):
 ## Open items
 
 1. **Domain model** (contracts / jobs / assets / visits shape, flexibility for future business lines) — own brainstorm + spec, next.
-2. **Role list finalization** — the operator's list included a role written as "cc"; define it (and confirm the full enum) before the roles migration ships.
-3. **Preview-app DB wiring** — per-PR Vercel preview needs a database: Supabase preview branch when it works (Beta), else a shared staging-lite branch DB (acceptable: hermetic tests never touch it). Decide at bootstrap when the integration is exercised.
-4. **Client/subcon import** — one-time Google Sheets import script; shape decided with the domain model.
-5. **Doppler free-tier seat count** — most volatile external fact here; re-verify at signup.
-6. **GitHub Team plan** — confirm the org is on Team (Rulesets' required-status-checks + auto-merge on a private repo need it).
+2. **Preview-app DB wiring** — per-PR Vercel preview needs a database: Supabase preview branch when it works (Beta), else a shared staging-lite branch DB (acceptable: hermetic tests never touch it). Decide at bootstrap when the integration is exercised.
+3. **Client/subcon import** — one-time Google Sheets import script; shape decided with the domain model.
+4. **Doppler free-tier seat count** — most volatile external fact here; re-verify at signup.
+5. **`agent` principal capability list** — which acts CC may perform in-app (triage, draft replies, …) is defined with the domain model; the principal itself is decided (S2).
+
+Resolved since Proposed: role "cc" = Claude Code → the `agent` service principal (S2); GitHub plan question → org is Free, repo made **public** (operator decision, prc-ops precedent) — full ruleset enforcement at $0.
 
 ## Bootstrap order (sketch — full plan via writing-plans)
 
